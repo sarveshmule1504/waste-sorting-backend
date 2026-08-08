@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TFLite Web Tester</title>
+    <!-- Load TensorFlow.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <!-- Load the TFLite package -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite/dist/tf-tflite.min.js"></script>
+    
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #ffffff; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background: #1e1e1e; padding: 30px; border-radius: 12px; box-shadow: 0 8px 16px rgba(0,0,0,0.5); }
+        h2 { text-align: center; color: #4CAF50; }
+        .upload-area { border: 2px dashed #4CAF50; padding: 40px; text-align: center; border-radius: 8px; margin: 20px 0; cursor: pointer; transition: background 0.3s; }
+        .upload-area:hover { background: #2a2a2a; }
+        #fileInput { display: none; }
+        .btn { background: #4CAF50; color: white; border: none; padding: 12px 24px; font-size: 16px; border-radius: 6px; cursor: pointer; width: 100%; transition: background 0.3s; margin-top: 10px;}
+        .btn:hover { background: #45a049; }
+        .btn:disabled { background: #555; cursor: not-allowed; }
+        #result { margin-top: 20px; padding: 20px; border-radius: 8px; background: #252525; display: none; }
+        #preview { max-width: 100%; max-height: 300px; border-radius: 8px; margin-top: 20px; display: none; margin-left: auto; margin-right: auto; }
+        .stat-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #333; }
+        .stat-value { font-weight: bold; color: #4CAF50; }
+        #loading { text-align: center; display: none; color: #4CAF50; margin-top: 15px; font-weight: bold; }
+        #modelStatus { text-align: center; color: #ffa500; font-weight: bold; margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Medical Waste Classifier Test</h2>
+    <div id="modelStatus">Loading TFLite model...</div>
+    
+    <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+        <p>Click to select an image or drag & drop here</p>
+        <input type="file" id="fileInput" accept="image/jpeg, image/png, image/webp" onchange="previewImage(event)">
+    </div>
+    
+    <img id="preview" src="" alt="Image Preview">
+    
+    <button class="btn" id="uploadBtn" onclick="runInference()" disabled>Classify Image</button>
+    <div id="loading">Running inference...</div>
+
+    <div id="result">
+        <h3 style="margin-top: 0; color: #fff; text-align: center;">Prediction Results</h3>
+        <div class="stat-row">
+            <span>Predicted Class:</span>
+            <span class="stat-value" style="font-size: 1.2em;" id="predClass">-</span>
+        </div>
+        <div class="stat-row">
+            <span>Confidence:</span>
+            <span class="stat-value" id="predConf">-</span>
+        </div>
+        <div class="stat-row">
+            <span>Inference Time:</span>
+            <span class="stat-value" id="predTime">-</span>
+        </div>
+    </div>
+</div>
+
+<script>
+    const LABELS = ["Hybrid", "Sharp", "Biodegradable", "Infectious"];
+    let tfliteModel = null;
+    let inputWidth, inputHeight;
+
+    const fileInput = document.getElementById('fileInput');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const preview = document.getElementById('preview');
+    const resultDiv = document.getElementById('result');
+    const loading = document.getElementById('loading');
+    const modelStatus = document.getElementById('modelStatus');
+
+    // Initialize the TFLite Model
+    async function initModel() {
+        try {
+            // Load the model from the local server
+            tfliteModel = await tflite.loadTFLiteModel('./model_esp32/model.tflite');
+            
+            // Get input details to know what size to resize the image to
+            const inputInfo = tfliteModel.inputs[0];
+            // Usually [1, 224, 224, 3]
+            inputHeight = inputInfo.shape[1];
+            inputWidth = inputInfo.shape[2];
+            
+            modelStatus.innerText = "Model Loaded Successfully! Ready for testing.";
+            modelStatus.style.color = "#4CAF50";
+        } catch (error) {
+            modelStatus.innerText = "Error loading model: " + error.message;
+            modelStatus.style.color = "#ff4c4c";
+            console.error(error);
+        }
+    }
+
+    initModel();
+
+    function previewImage(event) {
+        const file = event.target.files[0];
+        if (file) {
+            preview.src = URL.createObjectURL(file);
+            preview.style.display = 'block';
+            if (tfliteModel) {
+                uploadBtn.disabled = false;
+            }
+            resultDiv.style.display = 'none';
+        }
+    }
+
+    async function runInference() {
+        if (!tfliteModel || !preview.src) return;
+
+        uploadBtn.disabled = true;
+        loading.style.display = 'block';
+        resultDiv.style.display = 'none';
+
+        // Brief delay to allow UI to update
+        await new Promise(r => setTimeout(r, 50));
+
+        try {
+            // Preprocess image
+            const tensor = tf.browser.fromPixels(preview)
+                .resizeBilinear([inputHeight, inputWidth]);
+
+            let input;
+            const inputInfo = tfliteModel.inputs[0];
+            
+            // Handle float vs quantized input
+            if (inputInfo.dtype === 'float32') {
+                input = tensor.expandDims(0).toFloat().div(tf.scalar(255));
+            } else {
+                // For quantized models (uint8 or int8), TF.js uses int32 tensors
+                input = tensor.expandDims(0).cast('int32');
+            }
+
+            // Run inference and measure time
+            const startTime = performance.now();
+            let outputTensor = tfliteModel.predict(input);
+            const data = await outputTensor.data();
+            const endTime = performance.now();
+            
+            let predictions = Array.from(data);
+            
+            // De-quantize if necessary (simple approximation for probabilities)
+            if (inputInfo.dtype === 'int8' || inputInfo.dtype === 'uint8') {
+                // If the outputs are not probabilities, we normalize them here as an approximation
+                let sum = predictions.reduce((a, b) => a + b, 0);
+                if (sum > 1.5) { // If sum is not ~1, means we have raw uint8 values, converting to %
+                    predictions = predictions.map(v => Math.max(0, v) / 255.0);
+                }
+            }
+
+            // Find best prediction
+            let maxVal = -1;
+            let maxIdx = -1;
+            for (let i = 0; i < predictions.length; i++) {
+                if (predictions[i] > maxVal) {
+                    maxVal = predictions[i];
+                    maxIdx = i;
+                }
+            }
+
+            document.getElementById('predClass').innerText = LABELS[maxIdx];
+            document.getElementById('predConf').innerText = (maxVal * 100).toFixed(2) + '%';
+            document.getElementById('predTime').innerText = (endTime - startTime).toFixed(2) + ' ms';
+            
+            resultDiv.style.display = 'block';
+
+            // Clean up memory
+            tensor.dispose();
+            input.dispose();
+            outputTensor.dispose();
+            
+        } catch (error) {
+            alert('Error during classification: ' + error.message);
+            console.error(error);
+        } finally {
+            uploadBtn.disabled = false;
+            loading.style.display = 'none';
+        }
+    }
+</script>
+
+</body>
+</html>

@@ -1,0 +1,4 @@
+0 Hybrid
+1 sharp
+2 Biodegradable
+3 Infectious
