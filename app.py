@@ -89,6 +89,32 @@ def esp32_predict():
             os.remove(temp_path)
         return "ERROR: " + str(e), 500
 
+from flask import send_from_directory
+
+@app.route('/captures/<filename>')
+def serve_capture(filename):
+    return send_from_directory('captures', filename)
+
+@app.route('/captures', methods=['GET'])
+def view_captures():
+    captures_dir = "captures"
+    if not os.path.exists(captures_dir):
+        return "No captures yet! Use the ESP32 to take some photos."
+    
+    files = sorted(os.listdir(captures_dir), reverse=True)
+    if not files:
+        return "No captures found in the directory."
+        
+    html = "<h2>ESP32 Waste Captures</h2><div style='display:flex; flex-wrap:wrap; gap:10px;'>"
+    for f in files:
+        if f.endswith('.jpg'):
+            html += f"<div style='border:1px solid #ccc; padding:10px; border-radius:5px;'>"
+            html += f"<img src='/captures/{f}' style='width:320px; height:240px; display:block;' />"
+            html += f"<p style='text-align:center; font-family:sans-serif;'>{f}</p>"
+            html += "</div>"
+    html += "</div>"
+    return html
+
 if __name__ == '__main__':
     print("Starting ESP32 API...")
     app.run(host='0.0.0.0', port=5000, debug=False)
