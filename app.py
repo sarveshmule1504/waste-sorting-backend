@@ -1,6 +1,8 @@
 import os
 import time
 import numpy as np
+import datetime
+import shutil
 from PIL import Image
 from flask import Flask, request
 
@@ -69,7 +71,15 @@ def esp32_predict():
         predictions = output_data[0]
         max_idx = np.argmax(predictions)
         
-        os.remove(temp_path)
+        # Save the image instead of deleting it
+        captures_dir = "captures"
+        os.makedirs(captures_dir, exist_ok=True)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        predicted_label = LABELS[max_idx]
+        new_filename = f"{timestamp}_{predicted_label}.jpg"
+        new_path = os.path.join(captures_dir, new_filename)
+        shutil.move(temp_path, new_path)
+        print(f"Saved capture to: {new_path}")
         
         # Return just the number as plain text for the ESP32!
         return str(max_idx)
